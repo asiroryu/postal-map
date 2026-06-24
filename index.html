@@ -280,6 +280,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang TC','Micr
 .btnA{padding:7px 14px;background:var(--p);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:700}
 .btnC{padding:7px 14px;background:var(--bg);color:var(--txm);border:1px solid var(--bd);border-radius:6px;cursor:pointer;font-size:13px}
 .btnO{padding:7px 14px;background:#fff;color:var(--p);border:1.5px solid var(--p);border-radius:6px;cursor:pointer;font-size:13px;font-weight:700;display:inline-flex;align-items:center;gap:5px}
+
+.bn-sos{color:#e74c3c!important;font-weight:700}
 </style>
 </head>
 <body>
@@ -430,6 +432,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang TC','Micr
       <button class="bn active" onclick="bnav('map',this)"><span class="bi">🗺</span>地圖</button>
       <button class="bn" onclick="bnav('marks',this)"><span class="bi">📌</span>標記</button>
       <button class="bn" onclick="bnav('sections',this)"><span class="bi">🗂</span>路段</button>
+      <button class="bn" onclick="bnav('layers',this)"><span class="bi">🛰</span>圖層</button>
+      <button class="bn" onclick="openFilterPanel()"><span class="bi">🔎</span>查找</button>
+      <button class="bn bn-sos" onclick="triggerAccident()"><span class="bi">🆘</span>事故</button>
       <button class="bn" id="bnusr" onclick="bnav('users',this)" style="display:none"><span class="bi">👥</span>帳號</button>
     </div>
   </div>
@@ -570,6 +575,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang TC','Micr
 // 抑制 iOS Safari iframe cross-origin Script error
 window.onerror=function(msg,src,line,col,err){
   if(!msg||msg==='Script error.'||msg==='Script error')return true;
+  // 顯示真正的錯誤（非跨域）
+  if(msg && msg.indexOf('Script error')<0){
+    var el=document.getElementById('toast');
+    if(el){el.textContent='JS錯誤:'+msg.slice(0,60)+' L'+line;el.style.display='block';el.style.opacity='1';}
+    console.error('JSERR:',msg,'L:'+line,'C:'+col,err);
+  }
   return false;
 };
 window.addEventListener('unhandledrejection',function(e){
@@ -1195,9 +1206,6 @@ function toast(msg){
 }
 
 // INIT
-document.addEventListener('DOMContentLoaded',function(){
-  var lpEl=document.getElementById('lp');
-  if(lpEl)lpEl.addEventListener('keydown',function(e){if(e.key==='Enter')doLogin();});
 
 // ── MARKS ────────────────────────────────────────
 var selT=null, pendLL=null;
@@ -1583,6 +1591,16 @@ window.addEventListener('load',function(){
     }
   }
 });
+
+
+document.addEventListener('DOMContentLoaded',function(){
+  var lpEl=document.getElementById('lp');
+  if(lpEl)lpEl.addEventListener('keydown',function(e){if(e.key==='Enter')doLogin();});
+  // 路段輸入框 Enter 送出
+  ['sb-sz','sb-sroad','sb-sfrom','sb-sto'].forEach(function(id){
+    var el=document.getElementById(id);
+    if(el)el.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();addSec('sb');}});
+  });
 });
 </script>
 </body>
