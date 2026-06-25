@@ -282,6 +282,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang TC','Micr
 .btnO{padding:7px 14px;background:#fff;color:var(--p);border:1.5px solid var(--p);border-radius:6px;cursor:pointer;font-size:13px;font-weight:700;display:inline-flex;align-items:center;gap:5px}
 
 .bn-sos{color:#e74c3c!important;font-weight:700}
+
+/* 我的位置藍點 */
+#myLocPin{position:absolute;width:18px;height:18px;background:#1a73e8;border:3px solid #fff;
+  border-radius:50%;box-shadow:0 0 0 4px rgba(26,115,232,.25);z-index:500;
+  transform:translate(-50%,-50%);pointer-events:none;display:none}
+#myLocPin::after{content:'';position:absolute;inset:-8px;border-radius:50%;
+  background:rgba(26,115,232,.15);animation:locPulse 2s infinite}
+@keyframes locPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.4);opacity:0.5}}
 </style>
 </head>
 <body>
@@ -325,6 +333,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang TC','Micr
         <button class="mb mb-sos" onclick="triggerAccident()"><span class="mi">🆘</span>事故</button>
       </div>
       <div id="mhint"></div>
+      <div id="myLocPin"></div>
       <!-- Search -->
       <div id="sbar">
         <div style="display:flex;gap:6px;align-items:center">
@@ -434,6 +443,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang TC','Micr
       <button class="bn" onclick="bnav('sections',this)"><span class="bi">🗂</span>路段</button>
       <button class="bn" onclick="bnav('layers',this)"><span class="bi">🛰</span>圖層</button>
       <button class="bn" onclick="openFilterPanel()"><span class="bi">🔎</span>查找</button>
+      <button class="bn" id="bn-perf" onclick="openPerfPanel()"><span class="bi">📊</span>業績</button>
       <button class="bn bn-sos" onclick="triggerAccident()"><span class="bi">🆘</span>事故</button>
       <button class="bn" id="bnusr" onclick="bnav('users',this)" style="display:none"><span class="bi">👥</span>帳號</button>
     </div>
@@ -570,7 +580,43 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang TC','Micr
 </div>
 
 <!-- redirect-modal 已整合至 mk-modal，此區塊移除 -->
+
+<!-- 業績通報 Modal -->
+<div class="modal" id="perf-modal">
+  <div class="mbox">
+    <div class="mhd"><h3>📊 業績通報</h3><button class="mcls" onclick="closeM('perf-modal')">✕</button></div>
+    <div class="mbody">
+      <div class="frow">
+        <label>業績類型</label>
+        <select id="perf-type" style="width:100%;padding:8px;border:1.5px solid var(--bd);border-radius:6px;font-size:14px">
+          <option value="">── 請選擇 ──</option>
+          <option value="壽險">🏦 壽險</option>
+          <option value="郵票冊">📮 郵票冊</option>
+          <option value="其他業績">📋 其他業績</option>
+        </select>
+      </div>
+      <div class="frow">
+        <label>數量（件）</label>
+        <input type="number" id="perf-qty" placeholder="請輸入數量" min="1" value="1" style="width:100%;padding:8px;border:1.5px solid var(--bd);border-radius:6px;font-size:14px">
+      </div>
+      <div class="frow">
+        <label>說明（選填）</label>
+        <input type="text" id="perf-note" placeholder="可填入客戶名稱或備註">
+      </div>
+      <hr style="border:none;border-top:1px solid var(--bd);margin:12px 0">
+      <div style="font-size:13px;font-weight:700;margin-bottom:8px;color:var(--txm)">本日業績記錄</div>
+      <div id="perf-list" style="max-height:200px;overflow-y:auto">
+        <p style="text-align:center;color:#aaa;padding:12px">載入中...</p>
+      </div>
+    </div>
+    <div class="mfoot">
+      <button class="btnC" onclick="closeM('perf-modal')">關閉</button>
+      <button class="btnA" onclick="submitPerf()">📊 送出業績</button>
+    </div>
+  </div>
+</div>
 <div id="toast"></div>
+
 <script>
 // 抑制 iOS Safari iframe cross-origin Script error
 window.onerror=function(msg,src,line,col,err){
@@ -589,14 +635,66 @@ window.addEventListener('unhandledrejection',function(e){
   return true;
 });
 // DATA
+// Firebase REST API
+var FB_URL='https://postal-map-24781-default-rtdb.asia-southeast1.firebasedatabase.app';
+var _cache={};  // 本地快取，讓 UI 不用等網路
+
 var DB={
-  get:function(k){try{return JSON.parse(localStorage.getItem('pfm_'+k))||null}catch(e){return null}},
-  set:function(k,v){localStorage.setItem('pfm_'+k,JSON.stringify(v))}
+  get:function(k){
+    // 先回傳快取（UI 即時顯示），背景同步 Firebase
+    if(_cache[k]!==undefined)return _cache[k];
+    try{var v=JSON.parse(localStorage.getItem('pfm_'+k));_cache[k]=v;return v;}catch(e){return null;}
+  },
+  set:function(k,v){
+    // 同步到 localStorage（快取）
+    _cache[k]=v;
+    localStorage.setItem('pfm_'+k,JSON.stringify(v));
+    // 非同步寫入 Firebase
+    if(k==='session')return; // session 只存本機
+    fetch(FB_URL+'/'+k+'.json',{
+      method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(v)
+    }).catch(function(){});
+  },
+  // 從 Firebase 拉取最新資料（頁面載入時呼叫）
+  sync:function(k,cb){
+    fetch(FB_URL+'/'+k+'.json')
+    .then(function(r){return r.json();})
+    .then(function(v){
+      if(v!==null&&v!==undefined){
+        _cache[k]=v;
+        localStorage.setItem('pfm_'+k,JSON.stringify(v));
+      }
+      if(cb)cb(_cache[k]);
+    })
+    .catch(function(){if(cb)cb(_cache[k]);});
+  },
+  // 監聽 Firebase 即時更新（用於事故通報）
+  watch:function(k,cb){
+    var url=FB_URL+'/'+k+'.json';
+    function poll(){
+      fetch(url)
+      .then(function(r){return r.json();})
+      .then(function(v){
+        if(v!==null){
+          var old=JSON.stringify(_cache[k]);
+          var neu=JSON.stringify(v);
+          if(old!==neu){_cache[k]=v;localStorage.setItem('pfm_'+k,JSON.stringify(v));cb(v);}
+        }
+      })
+      .catch(function(){});
+    }
+    // 每 10 秒輪詢一次
+    setInterval(poll,10000);
+    poll(); // 立即執行一次
+  }
 };
 var DU=[
   {id:'u1',username:'admin123',password:'admin123',name:'系統管理員',role:'administrator'},
   {id:'u2',username:'admin',   password:'admin123',name:'區長王大明',  role:'admin'},
-  {id:'u3',username:'user',    password:'user123', name:'外勤員李小花',role:'users'}
+  {id:'u3',username:'user',    password:'user123', name:'外勤員李小花',role:'users'},
+    {id:'u4',username:'marketing',password:'mkt123',  name:'行銷單位',     role:'marketing'}
 ];
 function gU(){return DB.get('users')||DU}
 function sU(u){DB.set('users',u)}
@@ -644,11 +742,22 @@ function doLogout(){
   safeShow('lerr','none');
 }
 function applyPerm(){
-  var r=cu.role,rn={administrator:'最高管理員',admin:'管理員',users:'一般使用者'};
-  var _ub=document.getElementById('ubadge');if(_ub)_ub.textContent=cu.name+'・'+rn[r];
+  var r=cu.role;
+  var rn={administrator:'最高管理員',admin:'管理員',users:'一般使用者',marketing:'行銷單位'};
+  var _ub=document.getElementById('ubadge');if(_ub)_ub.textContent=cu.name+'・'+(rn[r]||r);
   safeShow('umbtn',r==='administrator'?'':'none');
   safeShow('bnusr',r==='administrator'?'':'none');
   safeShow('secAddCtrl',(r==='administrator'||r==='admin')?'':'none');
+  // 行銷單位：只顯示業績，隱藏地圖標記工具和事故按鈕
+  if(r==='marketing'){
+    safeShow('mtb','none');
+    safeShow('fab','none');
+    document.querySelectorAll('.bn').forEach(function(b){
+      var txt=b.textContent||'';
+      if(!txt.includes('業績')&&!txt.includes('地圖'))b.style.display='none';
+    });
+    setTimeout(function(){openPerfPanel();renderPerfList();},600);
+  }
 }
 // keydown listener moved to DOMContentLoaded below
 
@@ -776,6 +885,14 @@ function panBy(dx,dy){
   if(!panRAF) panRAF=requestAnimationFrame(function(){renderTiles();renderMarkPins();updateCoord();panRAF=null;});
 }
 
+function updateMyLocPin(){
+  // 地圖移動/縮放後更新藍點位置
+  if(_watchId===null)return;
+  navigator.geolocation.getCurrentPosition(
+    function(pos){showMyLoc(pos.coords.latitude,pos.coords.longitude);},
+    function(){},{maximumAge:10000}
+  );
+}
 function renderTiles(){
   mapW=mapWrap.clientWidth; mapH=mapWrap.clientHeight;
   var n=Math.pow(2,vZoom);
@@ -1321,7 +1438,8 @@ function submitAccident(){
     lat:lat?parseFloat(lat):null,lng:lng?parseFloat(lng):null,
     content:content,time:accTime,by:cu.name,status:'pending'};
   var accs=DB.get('accidents')||[];
-  accs.push(accData);DB.set('accidents',accs);
+  accs.push(accData);
+  DB.set('accidents',accs);
   var ms=gM();
   ms.push({id:accData.id,type:'accident',addr:addr,note:content,
     lat:accData.lat,lng:accData.lng,by:cu.name,time:accTime,
@@ -1444,18 +1562,93 @@ function renderFilterPanel(){
   }).join('');
 }
 
+
+// ── 業績通報 ─────────────────────────────────────
+function openPerfPanel(){
+  openM('perf-modal');
+}
+function submitPerf(){
+  var type=document.getElementById('perf-type').value;
+  var note=document.getElementById('perf-note').value.trim();
+  var qty=document.getElementById('perf-qty').value.trim();
+  if(!type){toast('請選擇業績類型');return;}
+  var rec={
+    id:'PERF'+Date.now(),
+    type:type,
+    qty:qty||'1',
+    note:note,
+    by:cu.name,
+    role:cu.role,
+    time:new Date().toLocaleString('zh-TW'),
+    status:'pending'
+  };
+  var perfs=DB.get('performance')||[];
+  perfs.push(rec);
+  DB.set('performance',perfs);
+  closeM('perf-modal');
+  document.getElementById('perf-note').value='';
+  document.getElementById('perf-qty').value='';
+  toast('✅ 業績通報已送出：'+type);
+}
+function renderPerfList(){
+  var perfs=DB.get('performance')||[];
+  var c=document.getElementById('perf-list');
+  if(!c)return;
+  if(!perfs.length){
+    c.innerHTML='<p style="text-align:center;color:#aaa;padding:20px">尚無業績記錄</p>';
+    return;
+  }
+  // 依類型統計
+  var stats={};
+  perfs.forEach(function(p){
+    if(!stats[p.type])stats[p.type]=0;
+    stats[p.type]+=parseInt(p.qty)||1;
+  });
+  var statHtml='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">';
+  Object.keys(stats).forEach(function(k){
+    statHtml+='<div style="background:var(--p);color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700">'+k+' '+stats[k]+'件</div>';
+  });
+  statHtml+='</div>';
+  c.innerHTML=statHtml+perfs.slice().reverse().map(function(p){
+    return '<div class="mki">'
+      +'<div class="mkbadge" style="background:#e8f5e9;font-size:18px">📊</div>'
+      +'<div class="mkinfo"><div class="mka">'+p.type+'</div>'
+      +'<div class="mkt">數量：'+p.qty+'件'+(p.note?'・'+p.note:'')+'</div>'
+      +'<div class="mktime">'+p.by+'・'+p.time+'</div></div>'
+      +'</div>';
+  }).join('');
+}
+function showMyLoc(lat,lng){
+  var pin=document.getElementById('myLocPin');
+  if(!pin||!mapWrap)return;
+  var r=mapWrap.getBoundingClientRect();
+  var px=latLng2px(lat,lng);
+  pin.style.left=px.x+'px';
+  pin.style.top=px.y+'px';
+  pin.style.display='block';
+}
+var _watchId=null;
 function locateMe(){
   if(!navigator.geolocation){
     toast('⚠️ 此裝置不支援 GPS 定位');return;
   }
   toast('📍 定位中，請稍候...');
+  // 停止舊的監聽
+  if(_watchId)navigator.geolocation.clearWatch(_watchId);
   navigator.geolocation.getCurrentPosition(
     function(pos){
       flyTo(pos.coords.latitude,pos.coords.longitude,18);
+      showMyLoc(pos.coords.latitude,pos.coords.longitude);
       toast('✅ 定位成功！');
+      // 持續追蹤位置更新藍點
+      _watchId=navigator.geolocation.watchPosition(
+        function(p){showMyLoc(p.coords.latitude,p.coords.longitude);},
+        function(){},
+        {enableHighAccuracy:true,maximumAge:5000}
+      );
     },
     function(err){
-      if(err.code===1)toast('⚠️ 請允許瀏覽器存取位置\n設定→Safari→位置→允許');
+      if(err.code===1)toast('⚠️ 請允許瀏覽器存取位置');
       else if(err.code===2)toast('⚠️ 無法取得 GPS，請到室外再試');
       else if(err.code===3)toast('⚠️ 定位逾時，請再試一次');
       else toast('⚠️ 定位失敗（'+err.code+'）');
@@ -1575,7 +1768,24 @@ window.addEventListener('load',function(){
       cu=u;
       safeShow('ls','none');
       safeClass('app','add','active');
-      applyPerm(); initMap(); renderMkList(); renderSecs(); checkAccidentsOnLogin();
+      applyPerm();
+      // 從 Firebase 同步最新資料後再初始化
+      var syncCount=0;
+      function onSynced(){
+        syncCount++;
+        if(syncCount>=2){ // marks + sections 都同步完才初始化
+          initMap(); renderMkList(); renderSecs(); checkAccidentsOnLogin();
+          // 啟動事故監聽（管理員/admin 才需要）
+          if(cu.role!=='users'){
+            DB.watch('accidents',function(accs){
+              var pending=(accs||[]).filter(function(a){return a.status==='pending';});
+              if(pending.length>0)showAdminAlert(pending[pending.length-1]);
+            });
+          }
+        }
+      }
+      DB.sync('marks',onSynced);
+      DB.sync('sections',onSynced);
     // 啟動後自動定位
     setTimeout(function(){
       try{
@@ -1587,7 +1797,7 @@ window.addEventListener('load',function(){
           );
         }
       }catch(e){}
-    }, 800);
+    }, 2000);
     }
   }
 });
@@ -1602,6 +1812,11 @@ document.addEventListener('DOMContentLoaded',function(){
     if(el)el.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();addSec('sb');}});
   });
 });
+
+
+
+
+
 </script>
 </body>
 </html>
